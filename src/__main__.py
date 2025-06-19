@@ -9,6 +9,9 @@ def get_encoders():
     import encoders
     return encoders.ENCODERS
 
+def debug_message(message):
+    print(message, file=sys.stderr)
+
 
 def main():
     encoders = get_encoders()
@@ -22,15 +25,15 @@ def main():
     args = parser.parse_args()
 
     # Log to stderr
-    print(f"Using encoder: {args.encoder}", file=sys.stderr)
-    print(f"Ring dimensions: height={args.height}mm, diameter={args.diameter}mm", file=sys.stderr)
+    debug_message(f"Using encoder: {args.encoder}")
+    debug_message(f"Ring dimensions: height={args.height}mm, diameter={args.diameter}mm")
     if args.dpi:
-        print(f"Output DPI: {args.dpi}", file=sys.stderr)
+        debug_message(f"Output DPI: {args.dpi}")
 
     # Read data from stdin
     data = sys.stdin.read()
     if not data:
-        print("No data from stdin.", file=sys.stderr)
+        debug_message("No data from stdin.")
         sys.exit(1)
 
     circumference = args.diameter * math.pi
@@ -44,15 +47,15 @@ def main():
         try:
             import cairosvg
         except ImportError:
-            print("cairosvg is not installed. Please install it to use --dpi.", file=sys.stderr)
-            print("pip install cairosvg", file=sys.stderr)
+            debug_message("cairosvg is not installed. Please install it to use --dpi.")
+            debug_message("pip install cairosvg")
             sys.exit(1)
 
         # Calculate output size in pixels
         width_px = int(circumference / 25.4 * args.dpi)
         height_px = int(args.height / 25.4 * args.dpi)
 
-        print(f"Output image size: {width_px}x{height_px} pixels", file=sys.stderr)
+        debug_message(f"Output image size: {width_px}x{height_px} pixels")
 
         png_data = cairosvg.svg2png(bytestring=svg_data.encode('utf-8'), output_width=width_px, output_height=height_px)
         sys.stdout.buffer.write(png_data)
