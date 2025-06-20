@@ -141,13 +141,13 @@ class RectangularHilbertPathGenerator(PathGenerator):
             return []
 
         # Find bounds of generated integer coordinates to scale them properly
-        min_x = min(p[0] for p in coords) - 1
-        max_x = max(p[0] for p in coords) + 1
+        min_x = min(p[0] for p in coords)
+        max_x = max(p[0] for p in coords)
         min_y = min(p[1] for p in coords)
         max_y = max(p[1] for p in coords)
 
-        int_width = max_x - min_x
-        int_height = max_y - min_y
+        int_width = max_x - min_x + 1
+        int_height = max_y - min_y + 1
 
         # Scale and translate to fit the padded drawing area
         padded_width = width - 2 * margin
@@ -156,12 +156,12 @@ class RectangularHilbertPathGenerator(PathGenerator):
         scaled_points = []
         for x, y in coords:
             # Shift to origin
-            shifted_x = x - min_x
-            shifted_y = y - min_y
+            shifted_x = x - min_x + 0.5
+            shifted_y = y - min_y + 0.5
             
             # Scale points to fit the padded area
-            scaled_x = margin + (shifted_x / int_width) * padded_width if int_width > 0 else width / 2
-            scaled_y = margin + (shifted_y / int_height) * padded_height if int_height > 0 else height / 2
+            scaled_x = margin + (shifted_x / int_width) * padded_width if int_width > 1 else width / 2
+            scaled_y = margin + (shifted_y / int_height) * padded_height if int_height > 1 else height / 2
             scaled_points.append((scaled_x, scaled_y))
 
         return scaled_points[:num_points]
