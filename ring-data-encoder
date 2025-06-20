@@ -10,5 +10,5 @@ source .venv/bin/activate || {
 }
 
 # Replace the shell with the Python script, forwarding all arguments
-exec python src/ "$@"
+exec python -m src "$@"
 

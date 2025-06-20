@@ -2,11 +2,13 @@ import argparse
 import sys
 import math
 
+from . import encoders
+from .paths import PATH_GENERATORS
+
 
 def get_encoders():
     """Dynamically loads encoder classes from the 'encoders' module."""
     # This allows adding new encoders without changing this file.
-    import encoders
     return encoders.ENCODERS
 
 def debug_message(message):
@@ -19,8 +21,10 @@ def main():
     parser.add_argument("--height", type=float, required=True, help="Height of the ring in mm.")
     parser.add_argument("--diameter", type=float, required=True, help="Diameter of the ring in mm.")
     parser.add_argument("--dpi", type=int, help="Dots per inch for raster output (PNG). If not given, outputs SVG.")
-    parser.add_argument("--encoder", type=str, default="fit_text", choices=encoders.keys(),
+    parser.add_argument("--encoder", type=str, default="fit_text", choices=list(encoders.keys()),
                         help="The encoding method to use.")
+    parser.add_argument("--path-type", type=str, default="snake", choices=list(PATH_GENERATORS.keys()),
+                        help="The path type to use for the 'bits_to_circles' encoder.")
 
     args = parser.parse_args()
 
@@ -31,17 +35,30 @@ def main():
         debug_message(f"Output DPI: {args.dpi}")
 
     # Read data from stdin
-    data = sys.stdin.read()
-    if not data:
+    data_bytes = sys.stdin.buffer.read()
+    if not data_bytes:
         debug_message("No data from stdin.")
         sys.exit(1)
 
     circumference = args.diameter * math.pi
 
-    encoder_class = encoders[args.encoder]
-    encoder = encoder_class()
+    encoder_name = args.encoder
+    encoder_class = encoders[encoder_name]
 
-    svg_data = encoder.encode(data, width=circumference, height=args.height)
+    encoder_args = {'width': circumference, 'height': args.height}
+
+    if encoder_name == 'bits_to_circles':
+        try:
+            encoder = encoder_class(path_type=args.path_type)
+            encoder_args['data'] = "".join(f"{byte:08b}" for byte in data_bytes)
+        except RuntimeError as e:
+            debug_message(f"Error initializing encoder: {e}")
+            sys.exit(1)
+    else:
+        encoder = encoder_class()
+        encoder_args['data'] = data_bytes.decode('utf-8', errors='replace')
+
+    svg_data = encoder.encode(**encoder_args)
 
     if args.dpi:
         try:
