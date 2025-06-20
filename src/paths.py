@@ -1,6 +1,7 @@
 import abc
 import math
 import random
+import sys
 from typing import List, Tuple
 
 try:
@@ -8,6 +9,12 @@ try:
     HILBERT_AVAILABLE = True
 except ImportError:
     HILBERT_AVAILABLE = False
+
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
 
 
 class PathGenerator(abc.ABC):
@@ -190,6 +197,9 @@ class _IntegerGridPathGenerator(PathGenerator):
             
             scaled_points.append((scaled_x, scaled_y))
 
+        if len(scaled_points) < num_points:
+            raise ValueError(f"Generated {len(scaled_points)} points, but {num_points} were requested")
+
         return scaled_points[:num_points]
 
 
@@ -260,55 +270,75 @@ class RectangularHilbertPathGenerator(_IntegerGridPathGenerator):
                                  -bx2, -by2, -(ax - ax2), -(ay - ay2), coords)
 
 
-class RandomWalkPathGenerator(_IntegerGridPathGenerator):
+class WFCPathGenerator(_IntegerGridPathGenerator):
     """
-    Generates points by performing a self-avoiding random walk on an integer grid.
-    If the walk gets stuck, it jumps to a random unvisited point and continues.
+    Generates points by performing a continuous, self-avoiding random walk on
+    an integer grid. This is a simplified approach inspired by wave function
+    collapse, ensuring a continuous path without jumping.
+    It uses backtracking to find a path if it gets stuck.
     """
+    def _solve(self, width: int, height: int, num_points: int, path: List[Tuple[int, int]], occupied: set, pbar=None) -> List[Tuple[int, int]]:
+        if len(path) == num_points:
+            return path.copy()
+
+        x, y = path[-1]
+        
+        # All 8 neighbors (horizontal, vertical, diagonal)
+        neighbors = [
+            (x + dx, y + dy) for dx in [-1, 0, 1] for dy in [-1, 0, 1]
+            if not (dx == 0 and dy == 0)
+        ]
+        random.shuffle(neighbors)
+
+        for nx, ny in neighbors:
+            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in occupied:
+                path.append((nx, ny))
+                occupied.add((nx, ny))
+                if pbar:
+                    pbar.update(1)
+
+                solution = self._solve(width, height, num_points, path, occupied, pbar)
+                if solution:
+                    return solution
+
+                # Backtrack
+                occupied.remove(path.pop())
+                if pbar:
+                    pbar.update(-1)
+        
+        return []
+
+
     def _generate_integer_points(self, width: int, height: int, num_points: int) -> List[Tuple[int, int]]:
-        if width <= 0 or height <= 0:
-            return []
-
-        points = []
-        occupied = set()
-
-        possible_points = [(x, y) for x in range(width) for y in range(height)]
-        if not possible_points:
+        if width <= 0 or height <= 0 or num_points == 0:
             return []
         
-        current_pos = random.choice(possible_points)
-        points.append(current_pos)
-        occupied.add(current_pos)
+        if num_points > width * height:
+            # Cannot generate more points than available grid cells
+            return []
 
-        while len(points) < num_points:
-            x, y = current_pos
-            neighbors = [(x + dx, y + dy) for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]]
-            
-            valid_neighbors = [
-                (nx, ny) for nx, ny in neighbors
-                if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in occupied
-            ]
+        # Always start in the left upper corner
+        start_pos = (0, 0)
+        
+        path = [start_pos]
+        occupied = {start_pos}
+        
+        pbar = None
+        if TQDM_AVAILABLE:
+            pbar = tqdm(total=num_points, desc="Generating WFC path", file=sys.stderr, initial=1, leave=False)
 
-            if valid_neighbors:
-                current_pos = random.choice(valid_neighbors)
-                points.append(current_pos)
-                occupied.add(current_pos)
-            else:
-                remaining_points = [p for p in possible_points if p not in occupied]
-                if not remaining_points:
-                    break
-                current_pos = random.choice(remaining_points)
-                if current_pos in occupied:
-                    continue
-                points.append(current_pos)
-                occupied.add(current_pos)
-
-        return points
+        try:
+            solution = self._solve(width, height, num_points, path, occupied, pbar)
+        finally:
+            if pbar:
+                pbar.close()
+        
+        return solution
 
 
 PATH_GENERATORS = {
     "snake": SnakePathGenerator,
     "hilbert": HilbertPathGenerator,
     "gilbert": RectangularHilbertPathGenerator,
-    "random_walk": RandomWalkPathGenerator,
+    "wfc": WFCPathGenerator,
 } 
