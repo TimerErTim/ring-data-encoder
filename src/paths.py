@@ -1,5 +1,6 @@
 import abc
 import math
+import random
 from typing import List, Tuple
 
 try:
@@ -42,7 +43,7 @@ class SnakePathGenerator(PathGenerator):
         if padded_width <= 0 or padded_height <= 0:
             return []
 
-        cols = int(math.sqrt(num_points * padded_width / padded_height))
+        cols = int(math.sqrt(num_points * padded_width / padded_height)) if padded_height > 0 else num_points
         if cols == 0:
             cols = 1
         rows = math.ceil(num_points / cols)
@@ -107,36 +108,56 @@ class HilbertPathGenerator(PathGenerator):
         return points
 
 
-class RectangularHilbertPathGenerator(PathGenerator):
+class _IntegerGridPathGenerator(PathGenerator):
     """
-    Generates points along a generalized Hilbert curve for rectangular domains.
-    Adapted from: https://github.com/jakubcerveny/gilbert
+    Abstract base class for path generators that operate on an integer grid
+    and then scale the points to the desired float dimensions.
     """
+
+    @abc.abstractmethod
+    def _generate_integer_points(self, width: int, height: int, num_points: int) -> List[Tuple[int, int]]:
+        """
+        Generates a list of (x, y) integer coordinates.
+        :param width: The width of the integer grid.
+        :param height: The height of the integer grid.
+        :param num_points: The number of points to generate.
+        :return: A list of (x, y) integer tuples.
+        """
+        pass
+
     def generate(self, width: float, height: float, num_points: int, margin: float = 0.0) -> List[Tuple[float, float]]:
+        if num_points == 0:
+            return []
+
+        if num_points == 1:
+            return [(width / 2, height / 2)]
+
+        if height <= 0 or width <= 0:
+            return []
         
-        # The underlying algorithm works with integer coordinates, so we'll scale to our float dimensions at the end.
-        # To preserve the path's integrity, we need to determine the smallest integer grid that can contain `num_points`.
-        
+        padded_width = width - 2 * margin
+        padded_height = height - 2 * margin
+
+        if padded_width <= 0 or padded_height <= 0:
+            return []
+
         # Find the smallest w_int, h_int such that w_int * h_int >= num_points
         # and w_int/h_int is close to width/height.
-        if height <= 0 or width <=0:
-            return []
-            
-        ratio = width / height
-        w_int = int(math.sqrt(num_points * ratio))
-        h_int = 0
-        if w_int > 0:
-            h_int = num_points // w_int
+        ratio = width / height if height > 0 else float('inf')
+        w_int = 1
+        if ratio > 0 and num_points > 0 and ratio != float('inf'):
+            w_int = int(math.sqrt(num_points * ratio))
         
-        while w_int > 0 and w_int * h_int < num_points:
-            h_int +=1
+        if w_int == 0:
+            w_int = 1
 
-        if w_int == 0: # handle num_points > 0 and width being very small
-             w_int=1
-             h_int=num_points
-
-        coords = self._gilbert2d(w_int, h_int)
+        h_int = (num_points + w_int - 1) // w_int
         
+        # Seed randomness for reproducible paths based on dimensions
+        random.seed(f"{width}-{height}")
+
+        coords = self._generate_integer_points(w_int, h_int, num_points)
+
         if not coords:
             return []
 
@@ -146,41 +167,55 @@ class RectangularHilbertPathGenerator(PathGenerator):
         min_y = min(p[1] for p in coords)
         max_y = max(p[1] for p in coords)
 
-        int_width = max_x - min_x + 1
-        int_height = max_y - min_y + 1
-
-        # Scale and translate to fit the padded drawing area
-        padded_width = width - 2 * margin
-        padded_height = height - 2 * margin
+        int_width = max_x - min_x
+        int_height = max_y - min_y
 
         scaled_points = []
         for x, y in coords:
             # Shift to origin
-            shifted_x = x - min_x + 0.5
-            shifted_y = y - min_y + 0.5
-            
+            shifted_x = x - min_x
+            shifted_y = y - min_y
+
             # Scale points to fit the padded area
-            scaled_x = margin + (shifted_x / int_width) * padded_width if int_width > 1 else width / 2
-            scaled_y = margin + (shifted_y / int_height) * padded_height if int_height > 1 else height / 2
+            # Handle single-point wide/high cases by centering
+            if int_width == 0:
+                scaled_x = width / 2
+            else:
+                scaled_x = margin + ((shifted_x + 0.5) / (int_width + 1)) * padded_width
+
+            if int_height == 0:
+                scaled_y = height / 2
+            else:
+                scaled_y = margin + ((shifted_y + 0.5) / (int_height + 1)) * padded_height
+            
             scaled_points.append((scaled_x, scaled_y))
 
         return scaled_points[:num_points]
 
 
-    def _sign(self, n):
+class RectangularHilbertPathGenerator(_IntegerGridPathGenerator):
+    """
+    Generates points along a generalized Hilbert curve for rectangular domains.
+    Adapted from: https://github.com/jakubcerveny/gilbert
+    """
+    def _generate_integer_points(self, width: int, height: int, num_points: int) -> List[Tuple[int, int]]:
+        coords = self._gilbert2d(width, height)
+        return coords[:num_points]
+
+    def _sign(self, n: int) -> int:
         if n > 0: return 1
         if n < 0: return -1
         return 0
 
-    def _gilbert2d(self, width, height):
-        coords = []
+    def _gilbert2d(self, width: int, height: int) -> List[Tuple[int, int]]:
+        coords: List[Tuple[int, int]] = []
         if width >= height:
             self._gilbert2d_recursive(0, 0, width, 0, 0, height, coords)
         else:
             self._gilbert2d_recursive(0, 0, 0, height, width, 0, coords)
         return coords
 
-    def _gilbert2d_recursive(self, x, y, ax, ay, bx, by, coords):
+    def _gilbert2d_recursive(self, x: int, y: int, ax: int, ay: int, bx: int, by: int, coords: List[Tuple[int, int]]):
         w = abs(ax + ay)
         h = abs(bx + by)
 
@@ -225,8 +260,55 @@ class RectangularHilbertPathGenerator(PathGenerator):
                                  -bx2, -by2, -(ax - ax2), -(ay - ay2), coords)
 
 
+class RandomWalkPathGenerator(_IntegerGridPathGenerator):
+    """
+    Generates points by performing a self-avoiding random walk on an integer grid.
+    If the walk gets stuck, it jumps to a random unvisited point and continues.
+    """
+    def _generate_integer_points(self, width: int, height: int, num_points: int) -> List[Tuple[int, int]]:
+        if width <= 0 or height <= 0:
+            return []
+
+        points = []
+        occupied = set()
+
+        possible_points = [(x, y) for x in range(width) for y in range(height)]
+        if not possible_points:
+            return []
+        
+        current_pos = random.choice(possible_points)
+        points.append(current_pos)
+        occupied.add(current_pos)
+
+        while len(points) < num_points:
+            x, y = current_pos
+            neighbors = [(x + dx, y + dy) for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]]
+            
+            valid_neighbors = [
+                (nx, ny) for nx, ny in neighbors
+                if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in occupied
+            ]
+
+            if valid_neighbors:
+                current_pos = random.choice(valid_neighbors)
+                points.append(current_pos)
+                occupied.add(current_pos)
+            else:
+                remaining_points = [p for p in possible_points if p not in occupied]
+                if not remaining_points:
+                    break
+                current_pos = random.choice(remaining_points)
+                if current_pos in occupied:
+                    continue
+                points.append(current_pos)
+                occupied.add(current_pos)
+
+        return points
+
+
 PATH_GENERATORS = {
     "snake": SnakePathGenerator,
     "hilbert": HilbertPathGenerator,
     "gilbert": RectangularHilbertPathGenerator,
+    "random_walk": RandomWalkPathGenerator,
 } 
