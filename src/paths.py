@@ -272,68 +272,147 @@ class RectangularHilbertPathGenerator(_IntegerGridPathGenerator):
 
 class WFCPathGenerator(_IntegerGridPathGenerator):
     """
-    Generates points by performing a continuous, self-avoiding random walk on
-    an integer grid. This is a simplified approach inspired by wave function
-    collapse, ensuring a continuous path without jumping.
-    It uses backtracking to find a path if it gets stuck.
+    Generates a seamless path by filling 4x4 subgrids in an order determined
+    by a Rectangular Hilbert Curve. A backtracking solver ensures each subgrid's
+    path ends at a point that borders the next subgrid in the sequence,
+    guaranteeing a continuous path.
     """
-    def _solve(self, width: int, height: int, num_points: int, path: List[Tuple[int, int]], occupied: set, pbar=None) -> List[Tuple[int, int]]:
-        if len(path) == num_points:
-            return path.copy()
+    subgrid_size = 4
 
+    def _get_subgrid_bounds(self, sg_coords, width, height):
+        if sg_coords is None:
+            return None
+        sg_x, sg_y = sg_coords
+        sg_min_x = sg_x * self.subgrid_size
+        sg_min_y = sg_y * self.subgrid_size
+        sg_max_x = min(sg_min_x + self.subgrid_size, width)
+        sg_max_y = min(sg_min_y + self.subgrid_size, height)
+        return (sg_min_x, sg_min_y, sg_max_x, sg_max_y)
+
+    def _has_unoccupied_neighbor_in_bounds(self, point, bounds, occupied, width, height):
+        if not bounds:
+            return False
+        x, y = point
+        b_min_x, b_min_y, b_max_x, b_max_y = bounds
+        # Check all 8 neighbors
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if (nx, ny) not in occupied and b_min_x <= nx < b_max_x and b_min_y <= ny < b_max_y:
+                    return True
+        return False
+
+    def _solve_subgrid_recursive(self, bounds, path, occupied, target_len, next_sg_bounds, width, height):
+        if len(path) == target_len:
+            if next_sg_bounds is None:  # Last subgrid, any endpoint is fine
+                return path.copy()
+            
+            last_point = path[-1]
+            if self._has_unoccupied_neighbor_in_bounds(last_point, next_sg_bounds, occupied, width, height):
+                return path.copy()
+            
+            return []  # Path is full but doesn't connect to the next subgrid
+
+        sg_min_x, sg_min_y, sg_max_x, sg_max_y = bounds
         x, y = path[-1]
         
-        # All 8 neighbors (horizontal, vertical, diagonal)
-        neighbors = [
-            (x + dx, y + dy) for dx in [-1, 0, 1] for dy in [-1, 0, 1]
-            if not (dx == 0 and dy == 0)
-        ]
+        neighbors = [(x + dx, y + dy) for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]] # Orthogonal
         random.shuffle(neighbors)
 
         for nx, ny in neighbors:
-            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in occupied:
+            if sg_min_x <= nx < sg_max_x and sg_min_y <= ny < sg_max_y and (nx, ny) not in occupied:
                 path.append((nx, ny))
                 occupied.add((nx, ny))
-                if pbar:
-                    pbar.update(1)
-
-                solution = self._solve(width, height, num_points, path, occupied, pbar)
+                solution = self._solve_subgrid_recursive(bounds, path, occupied, target_len, next_sg_bounds, width, height)
                 if solution:
                     return solution
-
-                # Backtrack
                 occupied.remove(path.pop())
-                if pbar:
-                    pbar.update(-1)
-        
         return []
 
+    def _find_connection_point(self, start_point, target_bounds, occupied, width, height):
+        x, y = start_point
+        b_min_x, b_min_y, b_max_x, b_max_y = target_bounds
+        
+        neighbors = [(x + dx, y + dy) for dx in [-1, 0, 1] for dy in [-1, 0, 1] if not (dx==0 and dy==0)]
+        random.shuffle(neighbors)
+        
+        for nx, ny in neighbors:
+            if (nx,ny) not in occupied and b_min_x <= nx < b_max_x and b_min_y <= ny < b_max_y:
+                return (nx, ny)
+        return None
 
     def _generate_integer_points(self, width: int, height: int, num_points: int) -> List[Tuple[int, int]]:
         if width <= 0 or height <= 0 or num_points == 0:
             return []
         
         if num_points > width * height:
-            # Cannot generate more points than available grid cells
             return []
 
-        # Always start in the left upper corner
-        start_pos = (0, 0)
+        sg_width = (width + self.subgrid_size - 1) // self.subgrid_size
+        sg_height = (height + self.subgrid_size - 1) // self.subgrid_size
         
-        path = [start_pos]
-        occupied = {start_pos}
+        if sg_height * sg_width > 1:
+            hilbert_gen = self
+            subgrid_order = hilbert_gen._generate_integer_points(sg_width, sg_height, sg_width * sg_height)
+        else:
+            subgrid_order = [(0, 0)]
+
+
+        path = [(0, 0)]
+        occupied = {(0, 0)}
         
         pbar = None
         if TQDM_AVAILABLE:
             pbar = tqdm(total=num_points, desc="Generating WFC path", file=sys.stderr, initial=1, leave=False)
-
+        
         try:
-            solution = self._solve(width, height, num_points, path, occupied, pbar)
+            for i in range(len(subgrid_order)):
+                if len(path) >= num_points:
+                    break
+                
+                current_sg_coords = subgrid_order[i]
+                next_sg_coords = subgrid_order[i + 1] if i + 1 < len(subgrid_order) else None
+
+                bounds = self._get_subgrid_bounds(current_sg_coords, width, height)
+                next_sg_bounds = self._get_subgrid_bounds(next_sg_coords, width, height)
+                
+                points_in_subgrid_now = {p for p in occupied if bounds[0] <= p[0] < bounds[2] and bounds[1] <= p[1] < bounds[3]}
+                subgrid_capacity = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+                points_to_generate = min(num_points - len(path), subgrid_capacity - len(points_in_subgrid_now))
+
+                if points_to_generate <= 0:
+                    continue
+
+                target_len_in_sg = len(points_in_subgrid_now) + points_to_generate
+                start_pos = path[-1]
+                
+                sub_path_local = self._solve_subgrid_recursive(bounds, [start_pos], occupied.copy(), target_len_in_sg, next_sg_bounds, width, height)
+                
+                if not sub_path_local:
+                    break
+
+                newly_added = [p for p in sub_path_local if p not in occupied]
+                path.extend(newly_added)
+                occupied.update(newly_added)
+                if pbar: 
+                    pbar.n = len(path)
+                    pbar.refresh()
+                
+                if next_sg_bounds and len(path) < num_points:
+                    connection = self._find_connection_point(path[-1], next_sg_bounds, occupied, width, height)
+                    if connection:
+                        path.append(connection)
+                        occupied.add(connection)
+                        if pbar: pbar.update(1)
+                    else:
+                        break # No bridge found
         finally:
             if pbar:
                 pbar.close()
-        
-        return solution
+
+        return path
 
 
 PATH_GENERATORS = {
