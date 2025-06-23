@@ -58,6 +58,7 @@ def main():
         encoder = encoder_class()
         encoder_args['data'] = data_bytes.decode('utf-8', errors='replace')
 
+    debug_message(f"Encoding data: {encoder_args['data']}")
     svg_data = encoder.encode(**encoder_args)
 
     if args.dpi:
